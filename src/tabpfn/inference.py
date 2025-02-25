@@ -168,6 +168,7 @@ class InferenceEngineOnDemand(InferenceEngine):
             X_test = torch.as_tensor(X_test, dtype=torch.float32, device=device)
 
             X_full = torch.cat([X_train, X_test], dim=0).unsqueeze(1)
+            batched_cat_ix = [cat_ix]
             y_train = torch.as_tensor(y_train, dtype=torch.float32, device=device)  # type: ignore  # noqa: PLW2901
 
             MemoryUsageEstimator.reset_peak_memory_if_required(
@@ -193,7 +194,7 @@ class InferenceEngineOnDemand(InferenceEngine):
                 output = self.model(
                     *(style, X_full, y_train),
                     only_return_standard_out=only_return_standard_out,
-                    categorical_inds=cat_ix,
+                    categorical_inds=batched_cat_ix,
                     single_eval_pos=len(y_train),
                 )
 
@@ -304,6 +305,7 @@ class InferenceEngineCachePreprocessing(InferenceEngine):
             X_test = torch.as_tensor(X_test, dtype=torch.float32, device=device)
 
             X_full = torch.cat([X_train, X_test], dim=0).unsqueeze(1)
+            batched_cat_ix = [cat_ix]
             y_train = torch.as_tensor(y_train, dtype=torch.float32, device=device)  # noqa: PLW2901
 
             # Handle type casting
@@ -332,7 +334,7 @@ class InferenceEngineCachePreprocessing(InferenceEngine):
                 output = self.model(
                     *(style, X_full, y_train),
                     only_return_standard_out=only_return_standard_out,
-                    categorical_inds=cat_ix,
+                    categorical_inds=batched_cat_ix,
                     single_eval_pos=len(y_train),
                 )
 
@@ -355,7 +357,7 @@ class InferenceEngineCacheKV(InferenceEngine):
 
     preprocessors: list[SequentialFeatureTransformer]
     configs: list[EnsembleConfig]
-    cat_ixs: list[list[int]]
+    cat_ixs: Sequence[list[int]]
     models: list[PerFeatureTransformer]
     n_train_samples: list[int]
     force_inference_dtype: torch.dtype | None
@@ -407,7 +409,7 @@ class InferenceEngineCacheKV(InferenceEngine):
         models: list[PerFeatureTransformer] = []
         preprocessors: list[SequentialFeatureTransformer] = []
         correct_order_configs: list[EnsembleConfig] = []
-        cat_ixs: list[list[int]] = []
+        cat_ixs: Sequence[list[int]] = []
         n_train_samples: list[int] = []
 
         for config, preprocessor, X, y, preprocessor_cat_ix in itr:
@@ -419,6 +421,7 @@ class InferenceEngineCacheKV(InferenceEngine):
             ens_model = deepcopy(model)
             ens_model = ens_model.to(device)
             X = torch.as_tensor(X, dtype=torch.float32, device=device).unsqueeze(1)  # noqa: PLW2901
+            batched_preprocessor_cat_ix = [preprocessor_cat_ix]
             y = torch.as_tensor(y, dtype=torch.float32, device=device)  # noqa: PLW2901
 
             # We do not reset the peak memory for cache_kv mode
@@ -432,7 +435,7 @@ class InferenceEngineCacheKV(InferenceEngine):
                 ens_model.forward(
                     *(None, X, y),
                     only_return_standard_out=only_return_standard_out,
-                    categorical_inds=preprocessor_cat_ix,
+                    categorical_inds=batched_preprocessor_cat_ix,
                     single_eval_pos=len(X),
                 )
 
