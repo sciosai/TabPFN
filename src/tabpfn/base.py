@@ -247,6 +247,7 @@ def create_inference_engine(  # noqa: PLR0913
 def check_cpu_warning(
     device: str | torch.device,
     X: np.ndarray | torch.Tensor | pd.DataFrame,
+    *,
     allow_cpu_override: bool = False,
 ) -> None:
     """Check if using CPU with large datasets and warn or error appropriately.
@@ -256,7 +257,9 @@ def check_cpu_warning(
         X: The input data (NumPy array, Pandas DataFrame, or Torch Tensor)
         allow_cpu_override: If True, allow CPU usage with large datasets.
     """
-    allow_cpu_override = allow_cpu_override or (os.getenv("TABPFN_ALLOW_CPU_LARGE_DATASET", "0") == "1")
+    allow_cpu_override = allow_cpu_override or (
+        os.getenv("TABPFN_ALLOW_CPU_LARGE_DATASET", "0") == "1"
+    )
 
     if allow_cpu_override:
         return
@@ -275,11 +278,12 @@ def check_cpu_warning(
                 "Running on CPU with more than 1000 samples is not allowed "
                 "by default due to slow performance.\n"
                 "To override this behavior, set the environment variable "
-                "TABPFN_ALLOW_CPU_LARGE_DATASET=1 or set ignore_pretraining_limits=True.\n"
+                "TABPFN_ALLOW_CPU_LARGE_DATASET=1 or "
+                "set ignore_pretraining_limits=True.\n"
                 "Alternatively, consider using a GPU or the tabpfn-client API: "
                 "https://github.com/PriorLabs/tabpfn-client"
             )
-        elif num_samples > 200:
+        if num_samples > 200:
             warnings.warn(
                 "Running on CPU with more than 200 samples may be slow.\n"
                 "Consider using a GPU or the tabpfn-client API: "
