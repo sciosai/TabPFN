@@ -355,13 +355,17 @@ def test_cpu_large_dataset_warning():
     with pytest.warns(
         UserWarning, match="Running on CPU with more than 200 samples may be slow"
     ):
-        # Set environment variable to allow large datasets to avoid RuntimeError
-        os.environ["TABPFN_ALLOW_CPU_LARGE_DATASET"] = "1"
-        try:
-            model.fit(X_large, y_large)
-        finally:
-            # Clean up environment variable
-            os.environ.pop("TABPFN_ALLOW_CPU_LARGE_DATASET")
+        model.fit(X_large, y_large)
+
+    X_large = rng.random((1001, 10))
+    y_large = rng.random(1001)
+    # Set environment variable to allow large datasets to avoid RuntimeError
+    os.environ["TABPFN_ALLOW_CPU_LARGE_DATASET"] = "1"
+    try:
+        model.fit(X_large, y_large)
+    finally:
+        # Clean up environment variable
+        os.environ.pop("TABPFN_ALLOW_CPU_LARGE_DATASET")
 
 
 def test_cpu_large_dataset_warning_override():
@@ -371,7 +375,7 @@ def test_cpu_large_dataset_warning_override():
     X_large = rng.random((1001, 10))
     y_large = rng.random(1001)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="Running on CPU with more than 1000 samples is not"):
         model = TabPFNRegressor(device="cpu")
         model.fit(X_large, y_large)
 
