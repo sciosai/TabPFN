@@ -357,16 +357,6 @@ def test_cpu_large_dataset_warning():
     ):
         model.fit(X_large, y_large)
 
-    X_large = rng.random((1001, 10))
-    y_large = rng.random(1001)
-    # Set environment variable to allow large datasets to avoid RuntimeError
-    os.environ["TABPFN_ALLOW_CPU_LARGE_DATASET"] = "1"
-    try:
-        model.fit(X_large, y_large)
-    finally:
-        # Clean up environment variable
-        os.environ.pop("TABPFN_ALLOW_CPU_LARGE_DATASET")
-
 
 def test_cpu_large_dataset_warning_override():
     """Test that runtime error is raised when using CPU with large datasets
@@ -379,9 +369,18 @@ def test_cpu_large_dataset_warning_override():
         model = TabPFNRegressor(device="cpu")
         model.fit(X_large, y_large)
 
+    # -- Test overrides
     model = TabPFNRegressor(device="cpu", ignore_pretraining_limits=True)
     model.fit(X_large, y_large)
 
+    # Set environment variable to allow large datasets to avoid RuntimeError
+    os.environ["TABPFN_ALLOW_CPU_LARGE_DATASET"] = "1"
+    try:
+        model = TabPFNRegressor(device="cpu", ignore_pretraining_limits=False)
+        model.fit(X_large, y_large)
+    finally:
+        # Clean up environment variable
+        os.environ.pop("TABPFN_ALLOW_CPU_LARGE_DATASET")
 
 def test_cpu_large_dataset_error():
     """Test that an error is raised when using CPU with very large datasets."""
