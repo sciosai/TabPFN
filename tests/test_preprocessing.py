@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pytest
 import torch
 
+from tabpfn.model import preprocessing
 from tabpfn.model.preprocessing import (
+    AdaptiveQuantileTransformer,
     DifferentiableZNormStep,
+    FeaturePreprocessingTransformerStep,
     ReshapeFeatureDistributionsStep,
 )
-
-# --- Fixtures ---
 
 
 @pytest.fixture
@@ -22,8 +25,8 @@ def sample_data():
 
 def test_preprocessing_large_dataset():
     # Generate a synthetic dataset with more than 10,000 samples
-    num_samples = 15000
-    num_features = 10
+    num_samples = 150000
+    num_features = 2
     rng = np.random.default_rng()
     X = rng.random((num_samples, num_features))
 
@@ -43,8 +46,16 @@ def test_preprocessing_large_dataset():
     # Run the preprocessing step
     result = preprocessing_step.fit_transform(X, categorical_features)
 
-    # Assert the result is not None
+    # Assert the result is not None and has the correct structure
     assert result is not None
+
+    Xt = result.X
+
+    # Verify the output shape matches the input shape
+    assert Xt.shape == (num_samples, num_features)
+
+    # Verify the dtype of the output matches the dtype of the input
+    assert Xt.dtype == X.dtype
 
 
 @pytest.fixture
@@ -193,3 +204,116 @@ def test_reshape_step_append_original_logic(
     # ASSERT: Check if the number of output features matches the expected outcome
     assert Xt.shape[0] == num_samples
     assert Xt.shape[1] == expected_output_features
+
+
+def _get_preprocessing_steps():
+    defaults = [
+        cls
+        for cls in preprocessing.__dict__.values()
+        if (
+            isinstance(cls, type)
+            and issubclass(cls, FeaturePreprocessingTransformerStep)
+            and cls is not FeaturePreprocessingTransformerStep
+            and cls is not DifferentiableZNormStep  # works on torch tensors
+        )
+    ]
+    extras = [
+        partial(
+            ReshapeFeatureDistributionsStep,
+            transform_name="none",
+            append_to_original=True,
+            global_transformer_name="svd",
+            apply_to_categorical=False,
+        )
+    ]
+    return defaults + extras
+
+
+def _get_random_data(rng, n_samples, n_features, cat_inds):
+    x = rng.random((n_samples, n_features))
+    x[:, cat_inds] = rng.integers(0, 3, size=(n_samples, len(cat_inds))).astype(float)
+    return x
+
+
+def test__preprocessing_steps__transform__is_idempotent():
+    """Test that calling transform multiple times on the same data
+    gives the same result. This ensures transform is deterministic
+    and doesn't have internal state changes.
+    """
+    rng = np.random.default_rng(42)
+    n_samples = 20
+    n_features = 4
+    cat_inds = [1, 3]
+    for cls in _get_preprocessing_steps():
+        x = _get_random_data(rng, n_samples, n_features, cat_inds)
+        x2 = _get_random_data(rng, n_samples, n_features, cat_inds)
+
+        obj = cls().fit(x, cat_inds)
+
+        # Calling transform multiple times should give the same result
+        result1 = obj.transform(x2)
+        result2 = obj.transform(x2)
+
+        assert np.allclose(result1.X, result2.X), f"Transform not idempotent for {cls}"
+        assert result1.categorical_features == result2.categorical_features
+
+
+def test__preprocessing_steps__transform__no_sample_interdependence():
+    """Test that preprocessing steps don't have
+    interdependence between samples during transform. Each sample should be
+    transformed independently based only on parameters learned during fit.
+    """
+    rng = np.random.default_rng(42)
+    n_samples = 20
+    n_features = 4
+    cat_inds = [1, 3]
+    for cls in _get_preprocessing_steps():
+        x = _get_random_data(rng, n_samples, n_features, cat_inds)
+        x2 = _get_random_data(rng, n_samples, n_features, cat_inds)
+
+        obj = cls().fit(x, cat_inds)
+
+        # Test 1: Shuffling samples should give correspondingly shuffled results
+        result_normal = obj.transform(x2)
+        result_reversed = obj.transform(x2[::-1])
+        assert np.allclose(
+            result_reversed.X[::-1], result_normal.X
+        ), f"Transform depends on sample order for {cls}"
+
+        # Test 2: Transforming a subset should match the subset of full transformation
+        result_full = obj.transform(x2)
+        result_subset = obj.transform(x2[:4])
+        assert np.allclose(
+            result_full.X[:4], result_subset.X
+        ), f"Transform depends on other samples in batch for {cls}"
+
+        # Test 3: Categorical features should remain the same
+        assert result_full.categorical_features == result_subset.categorical_features
+
+
+def test_adaptive_quantile_transformer_with_numpy_generator():
+    """Tests that AdaptiveQuantileTransformer can handle a np.random.Generator.
+
+    This test ensures that the transformer is compatible with NumPy's modern
+    random number generation API, which is passed down from other parts of
+    the TabPFN codebase. It replicates the conditions that previously caused a
+    ValueError in scikit-learn's check_random_state.
+    """
+    # ARRANGE: Create sample data and a modern NumPy random number generator
+    rng = np.random.default_rng(42)
+    X = rng.random((100, 10))
+
+    # ARRANGE: Instantiate the transformer with the Generator object
+    # This is the exact condition that caused the bug
+    transformer = AdaptiveQuantileTransformer(
+        output_distribution="uniform",
+        n_quantiles=10,
+        random_state=rng,
+    )
+
+    # ACT & ASSERT: Ensure that fitting the transformer does not raise an error
+    transformer.fit(X)
+
+    # Further assertion to ensure the transformer is functional
+    assert hasattr(transformer, "quantiles_")
+    assert transformer.quantiles_.shape == (10, 10)

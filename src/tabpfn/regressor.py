@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 import typing
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -42,8 +43,12 @@ from tabpfn.base import (
     determine_precision,
     get_preprocessed_datasets_helper,
 )
-from tabpfn.inference import InferenceEngineBatchedNoPreprocessing
+from tabpfn.inference import InferenceEngine, InferenceEngineBatchedNoPreprocessing
 from tabpfn.model.bar_distribution import FullSupportBarDistribution
+from tabpfn.model.loading import (
+    load_fitted_tabpfn_model,
+    save_fitted_tabpfn_model,
+)
 from tabpfn.preprocessing import (
     DatasetCollectionWithPreprocessing,
     EnsembleConfig,
@@ -73,7 +78,6 @@ if TYPE_CHECKING:
 
     from tabpfn.config import ModelInterfaceConfig
     from tabpfn.constants import XType, YType
-    from tabpfn.inference import InferenceEngine
     from tabpfn.model.config import ModelConfig
 
     try:
@@ -577,7 +581,14 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
             no_refit: if True, the classifier will not be reinitialized when calling
                 fit multiple times.
         """
-        # If there isa model, and we are lazy, we skip reinitialization
+        if self.fit_mode != "batched":
+            logging.warning(
+                "The model was not in 'batched' mode. "
+                "Automatically switching to 'batched' mode for finetuning."
+            )
+            self.fit_mode = "batched"
+
+        # If there is a model, and we are lazy, we skip reinitialization
         if not hasattr(self, "model_") or not no_refit:
             byte_size, rng = self._initialize_model_variables()
         else:
@@ -585,14 +596,6 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
                 self.inference_precision, self.device_
             )
             rng = None
-
-        if self.fit_mode != "batched":
-            raise ValueError(
-                "The fit_from_preprocessed function"
-                " is only supported in the batched fit_mode."
-                " Since in other fit_modes the preprocessing"
-                " is done as part of the inference engine"
-            )
 
         # Create the inference engine
         self.executor_ = create_inference_engine(
@@ -627,6 +630,15 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
             self
         """
         ensemble_configs: list[RegressorEnsembleConfig]
+
+        if self.fit_mode == "batched":
+            logging.warning(
+                "The model was in 'batched' mode, likely after finetuning. "
+                "Automatically switching to 'fit_preprocessors' mode for standard "
+                "prediction. The model will be re-initialized."
+            )
+            self.fit_mode = "fit_preprocessors"
+
         if not hasattr(self, "model_") or not self.differentiable_input:
             byte_size, rng = self._initialize_model_variables()
             ensemble_configs, X, y, self.bardist_ = (
@@ -636,11 +648,6 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
             _, rng = infer_random_state(self.random_state)
             _, _, byte_size = determine_precision(
                 self.inference_precision, self.device_
-            )
-
-        if self.fit_mode == "batched":
-            raise ValueError(
-                "The fit() function is not supported in 'batched' fit_mode."
             )
 
         assert len(ensemble_configs) == self.n_estimators
@@ -654,7 +661,7 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
                     [self.constant_value_ - 1e-5, self.constant_value_ + 1e-5]
                 )
             )
-
+            # No need to create an inference engine for a constant prediction
             return self
 
         mean, std = np.mean(y), np.std(y)
@@ -742,7 +749,7 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
                 - If `"median"`, we return the median over the predicted distribution.
                 - If `"mode"`, we return the mode over the predicted distribution.
                 - If `"quantiles"`, we return the quantiles of the predicted
-                    distribution. The parameter `output_quantiles` determines which
+                    distribution. The parameter `quantiles` determines which
                     quantiles are returned.
                 - If `"main"`, we return the all output types above in a dict.
                 - If `"full"`, we return the full output of the model, including the
@@ -807,7 +814,6 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
         logits = logits.log()
         if logits.dtype == torch.float16:
             logits = logits.float()
-        logits = logits.cpu()
 
         # Determine and return intended output type
         logit_to_output = partial(
@@ -855,7 +861,7 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
         *,
         use_inference_mode: bool = False,
     ) -> tuple[torch.Tensor | None, list[torch.Tensor], list[np.ndarray]]:
-        """Forward pass for TabPFNRegressor Infernce Engine.
+        """Forward pass for TabPFNRegressor Inference Engine.
         Used in fine-tuning and prediction. Called directly
         in FineTuning training loop or by predict() function
         with the use_inference_mode flag explicitly set to True.
@@ -1012,8 +1018,38 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
         X: XType,
         data_source: Literal["train", "test"] = "test",
     ) -> np.ndarray:
-        """Gets the embeddings for the input data `X`."""
+        """Gets the embeddings for the input data `X`.
+
+        Args:
+            X : XType
+                The input data.
+            data_source : {"train", "test"}, default="test"
+                Select the transformer output to return. Use ``"train"`` to obtain
+                embeddings from the training tokens and ``"test"`` for the test
+                tokens. When ``n_estimators > 1`` the returned array has shape
+                ``(n_estimators, n_samples, embedding_dim)``.
+
+        Returns:
+            np.ndarray
+                The computed embeddings for each fitted estimator.
+        """
         return _get_embeddings(self, X, data_source)
+
+    def save_fit_state(self, path: Path | str) -> None:
+        """Save a fitted regressor, light wrapper around save_fitted_tabpfn_model."""
+        save_fitted_tabpfn_model(self, path)
+
+    @classmethod
+    def load_from_fit_state(
+        cls, path: Path | str, *, device: str | torch.device = "cpu"
+    ) -> TabPFNRegressor:
+        """Restore a fitted regressor, light wrapper around load_fitted_tabpfn_model."""
+        est = load_fitted_tabpfn_model(path, device=device)
+        if not isinstance(est, cls):
+            raise TypeError(
+                f"Attempting to load a '{est.__class__.__name__}' as '{cls.__name__}'"
+            )
+        return est
 
 
 def _logits_to_output(

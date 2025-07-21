@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import warnings
 from abc import abstractmethod
@@ -14,7 +15,6 @@ from typing_extensions import Self, override
 import numpy as np
 import scipy
 import torch
-from pandas.core.common import contextlib
 from scipy.stats import shapiro
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.decomposition import TruncatedSVD
@@ -104,36 +104,32 @@ class AdaptiveQuantileTransformer(QuantileTransformer):
     def fit(
         self, X: np.ndarray, y: np.ndarray | None = None
     ) -> AdaptiveQuantileTransformer:
-        X = self._validate_data(
-            X, copy=self.copy, estimator=self, dtype=float, force_all_finite="allow-nan"
-        )
         n_samples = X.shape[0]
 
         # Adapt n_quantiles for this fit: min of user's preference and available samples
         # Ensure n_quantiles is at least 1
-        effective_n_quantiles = max(1, min(self._user_n_quantiles, n_samples))
+        effective_n_quantiles = max(
+            1, min(self._user_n_quantiles, n_samples, self.subsample)
+        )
 
         # Set self.n_quantiles to the effective value BEFORE calling super().fit()
         # This ensures the parent class uses the adapted value for fitting
         # and self.n_quantiles will reflect the value used for the fit.
         self.n_quantiles = effective_n_quantiles
 
+        # Convert Generator to RandomState if needed for sklearn compatibility
+        if isinstance(self.random_state, np.random.Generator):
+            # Generate a random integer to use as seed for RandomState
+            seed = int(self.random_state.integers(0, 2**32))
+            self.random_state = np.random.RandomState(seed)
+        elif hasattr(self.random_state, "bit_generator"):
+            # Handle other Generator-like objects
+            raise ValueError(
+                f"Unsupported random state type: {type(self.random_state)}. "
+                "Please provide an integer seed or np.random.RandomState object."
+            )
+
         return super().fit(X, y)
-
-    # For completeness and scikit-learn compatibility, allow getting params
-    # to show the original user setting if desired, though self.n_quantiles
-    # will show the fitted effective value.
-    def get_params(self, *, deep: bool = True) -> dict:
-        params = super().get_params(deep)
-        # Report the original user_n_quantiles if it's in params
-        if "_user_n_quantiles" in self.__dict__:  # Check if it was set
-            params["n_quantiles"] = self._user_n_quantiles
-        return params
-
-    def set_params(self, **params: Any) -> AdaptiveQuantileTransformer:
-        if "n_quantiles" in params:
-            self._user_n_quantiles = params["n_quantiles"]
-        return super().set_params(**params)
 
 
 ALPHAS = (
@@ -190,9 +186,12 @@ class SafePowerTransformer(PowerTransformer):
         self,
         variance_threshold: float = 1e-3,
         large_value_threshold: float = 100,
-        **kwargs: Any,
+        method="yeo-johnson",
+        *,
+        standardize=True,
+        copy=True,
     ):
-        super().__init__(**kwargs)
+        super().__init__(method=method, standardize=standardize, copy=copy)
         self.variance_threshold = variance_threshold
         self.large_value_threshold = large_value_threshold
 
@@ -586,7 +585,7 @@ class AddFingerprintFeaturesStep(FeaturePreprocessingTransformerStep):
             for i, row in enumerate(salted_X):
                 h = float_hash_arr(row)
                 add_to_hash = 0
-                while h in seen_hashes:
+                while h in seen_hashes and not np.isnan(row).all():
                     add_to_hash += 1
                     h = float_hash_arr(row + add_to_hash)
                 X_h[i] = h
@@ -1288,7 +1287,13 @@ class EncodeCategoricalFeaturesStep(FeaturePreprocessingTransformerStep):
         if self.categorical_transformer_ is None:
             return X
 
-        transformed = self.categorical_transformer_.transform(X)
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message=".*Found unknown categories in col.*"
+            )  # These warnings are expected when transforming test data
+            transformed = self.categorical_transformer_.transform(X)
         if self.categorical_transform_name.endswith("_shuffled"):
             for col, mapping in self.random_mappings_.items():
                 not_nan_mask = ~np.isnan(transformed[:, col])  # type: ignore
@@ -1302,7 +1307,7 @@ class NanHandlingPolynomialFeaturesStep(FeaturePreprocessingTransformerStep):
     def __init__(
         self,
         *,
-        max_features: int | None,
+        max_features: int | None = None,
         random_state: int | np.random.Generator | None = None,
     ):
         super().__init__()

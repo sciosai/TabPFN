@@ -19,11 +19,17 @@ from sklearn.utils.estimator_checks import parametrize_with_checks
 from torch import nn
 
 from tabpfn import TabPFNRegressor
+from tabpfn.base import RegressorModelSpecs, initialize_tabpfn_model
 from tabpfn.preprocessing import PreprocessorConfig
+
+from .utils import check_cpu_float16_support
 
 devices = ["cpu"]
 if torch.cuda.is_available():
     devices.append("cuda")
+
+# --- Environment-Aware Check for CPU Float16 Support ---
+is_cpu_float16_supported = check_cpu_float16_support()
 
 feature_shift_decoders = ["shuffle", "rotate"]
 fit_modes = [
@@ -31,8 +37,8 @@ fit_modes = [
     "fit_preprocessors",
     "fit_with_cache",
 ]
-inference_precision_methods = ["auto", "autocast", torch.float64]
-remove_remove_outliers_stds = [None, 12]
+inference_precision_methods = ["auto", "autocast", torch.float64, torch.float16]
+remove_outliers_stds = [None, 12]
 estimators = [1, 2]
 
 all_combinations = list(
@@ -42,7 +48,7 @@ all_combinations = list(
         feature_shift_decoders,
         fit_modes,
         inference_precision_methods,
-        remove_remove_outliers_stds,
+        remove_outliers_stds,
     ),
 )
 
@@ -77,6 +83,14 @@ def test_regressor(
 ) -> None:
     if device == "cpu" and inference_precision == "autocast":
         pytest.skip("Only GPU supports inference_precision")
+
+    # Use the environment-aware check to skip only if necessary
+    if (
+        device == "cpu"
+        and inference_precision == torch.float16
+        and not is_cpu_float16_supported
+    ):
+        pytest.skip("CPU float16 matmul not supported in this PyTorch version.")
 
     model = TabPFNRegressor(
         n_estimators=n_estimators,
@@ -513,3 +527,50 @@ def test_constant_target(X_y: tuple[np.ndarray, np.ndarray]) -> None:
         assert np.all(
             quantile_prediction == 5.0
         ), "Quantile predictions are not constant as expected for full output"
+
+
+def test_initialize_model_variables_regressor_sets_required_attributes() -> None:
+    # 1) Standalone initializer
+    model, config, norm_criterion = initialize_tabpfn_model(
+        model_path="auto",
+        which="regressor",
+        fit_mode="low_memory",
+    )
+    assert model is not None, "model should be initialized for regressor"
+    assert config is not None, "config should be initialized for regressor"
+    assert (
+        norm_criterion is not None
+    ), "norm_criterion should be initialized for regressor"
+
+    # 2) Test the sklearn-style wrapper on TabPFNRegressor
+    regressor = TabPFNRegressor(model_path="auto", device="cpu", random_state=42)
+    regressor._initialize_model_variables()
+
+    assert hasattr(regressor, "model_"), "regressor should have model_ attribute"
+    assert regressor.model_ is not None, "model_ should be initialized for regressor"
+
+    assert hasattr(regressor, "config_"), "regressor should have config_ attribute"
+    assert regressor.config_ is not None, "config_ should be initialized for regressor"
+
+    assert hasattr(regressor, "bardist_"), "regressor should have bardist_ attribute"
+    assert (
+        regressor.bardist_ is not None
+    ), "bardist_ should be initialized for regressor"
+
+    # 3) Reuse via RegressorModelSpecs
+    spec = RegressorModelSpecs(
+        model=regressor.model_,
+        config=regressor.config_,
+        norm_criterion=regressor.bardist_,
+    )
+    reg2 = TabPFNRegressor(model_path=spec)
+    reg2._initialize_model_variables()
+
+    assert hasattr(reg2, "model_"), "regressor2 should have model_ attribute"
+    assert reg2.model_ is not None, "model_ should be initialized for regressor2"
+
+    assert hasattr(reg2, "config_"), "regressor2 should have config_ attribute"
+    assert reg2.config_ is not None, "config_ should be initialized for regressor2"
+
+    assert hasattr(reg2, "bardist_"), "regressor2 should have bardist_ attribute"
+    assert reg2.bardist_ is not None, "bardist_ should be initialized for regressor2"
