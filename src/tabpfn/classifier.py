@@ -30,6 +30,8 @@ import torch
 from sklearn import config_context
 from sklearn.base import BaseEstimator, ClassifierMixin, check_is_fitted
 from sklearn.preprocessing import LabelEncoder
+from tabpfn_common_utils.telemetry import track_model_call
+from tabpfn_common_utils.telemetry.interactive import ping
 
 from tabpfn.base import (
     check_cpu_warning,
@@ -388,6 +390,9 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         self.inference_config = inference_config
         self.differentiable_input = differentiable_input
 
+        # Ping the usage service if telemetry enabled
+        ping()
+
     # TODO: We can remove this from scikit-learn lower bound of 1.6
     def _more_tags(self) -> dict[str, Any]:
         return {
@@ -557,6 +562,7 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         assert len(ensemble_configs) == self.n_estimators
         return ensemble_configs, X, y
 
+    @track_model_call("fit", param_names=["X_preprocessed", "y_preprocessed"])
     def fit_from_preprocessed(
         self,
         X_preprocessed: list[torch.Tensor],
@@ -619,6 +625,7 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         return self
 
     @config_context(transform_output="default")  # type: ignore
+    @track_model_call(model_method="fit", param_names=["X", "y"])
     def fit(self, X: XType, y: YType) -> Self:
         """Fit the model.
 
@@ -689,6 +696,7 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
 
         return self.forward(X, use_inference_mode=True, return_logits=return_logits)
 
+    @track_model_call(model_method="predict", param_names=["X"])
     def predict(self, X: XType) -> np.ndarray:
         """Predict the class labels for the provided input samples.
 
@@ -698,7 +706,8 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         Returns:
             The predicted class labels as a NumPy array.
         """
-        proba = self.predict_proba(X)
+        proba = self._predict_proba(X)
+
         y_pred = np.argmax(proba, axis=1)
         if hasattr(self, "label_encoder_") and self.label_encoder_ is not None:
             return self.label_encoder_.inverse_transform(y_pred)
@@ -706,6 +715,7 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         return y_pred
 
     @config_context(transform_output="default")
+    @track_model_call(model_method="predict", param_names=["X"])
     def predict_logits(self, X: XType) -> np.ndarray:
         """Predict the raw logits for the provided input samples.
 
@@ -721,8 +731,23 @@ class TabPFNClassifier(ClassifierMixin, BaseEstimator):
         logits_tensor = self._raw_predict(X, return_logits=True)
         return logits_tensor.float().detach().cpu().numpy()
 
-    @config_context(transform_output="default")  # type: ignore
+    @track_model_call(model_method="predict", param_names=["X"])
     def predict_proba(self, X: XType) -> np.ndarray:
+        """Predict the probabilities of the classes for the provided input samples.
+
+        This is a wrapper around the `_predict_proba` method.
+
+        Args:
+            X: The input data for prediction.
+
+        Returns:
+            The predicted probabilities of the classes as a NumPy array.
+            Shape (n_samples, n_classes).
+        """
+        return self._predict_proba(X)
+
+    @config_context(transform_output="default")  # type: ignore
+    def _predict_proba(self, X: XType) -> np.ndarray:
         """Predict the probabilities of the classes for the provided input samples.
 
         Args:
