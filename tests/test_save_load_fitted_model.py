@@ -144,9 +144,8 @@ def test_save_load_happy_path(
 
 
 # --- Error Handling Tests ---
-def test_saving_unfitted_model_raises_error(regression_data, tmp_path):
+def test_saving_unfitted_model_raises_error(tmp_path: Path) -> None:
     """Tests that saving an unfitted model raises a RuntimeError."""
-    X, y = regression_data
     model = TabPFNRegressor()
     with pytest.raises(RuntimeError, match="Estimator must be fitted before saving"):
         model.save_fit_state(tmp_path / "model.tabpfn_fit")
