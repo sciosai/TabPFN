@@ -1,4 +1,4 @@
-"""Configuration for the model interfaces."""
+"""Additional configuration options for inference."""
 
 #  Copyright (c) Prior Labs GmbH 2025.
 
@@ -12,12 +12,12 @@ from tabpfn.preprocessing import PreprocessorConfig
 
 
 @dataclass
-class ModelInterfaceConfig:
-    """Constants used as default HPs in the model interfaces.
+class InferenceConfig:
+    """Additional configuration options for inference.
 
-    These constants are not exposed to the models' init on purpose
-    to reduce the complexity for users. Furthermore, most of these
-    should not be optimized over by the (standard) user.
+    Several configuration options for inference are exposed in the `TabPFNClassifier`
+    and `TabPFNRegressor` interfaces. The options in this class are more advanced and
+    not expected to be changed by the (standard) user.
 
     Several of the preprocessing options are supported by our code for efficiency
     reasons (to avoid loading TabPFN multiple times). However, these can also be
@@ -163,37 +163,37 @@ class ModelInterfaceConfig:
     @staticmethod
     def from_user_input(
         *,
-        inference_config: dict | ModelInterfaceConfig | None,
-    ) -> ModelInterfaceConfig:
-        """Converts the user input to a `ModelInterfaceConfig` object.
+        inference_config: dict | InferenceConfig | None,
+    ) -> InferenceConfig:
+        """Converts the user input to a `InferenceConfig` object.
 
-        The input inference_config can be a dictionary, a `ModelInterfaceConfig` object,
+        The input inference_config can be a dictionary, a `InferenceConfig` object,
         or None. If a dictionary is passed, the keys must match the attributes of
-        `ModelInterfaceConfig`. If a `ModelInterfaceConfig` object is passed, it is
-        returned as is. If None is passed, a new `ModelInterfaceConfig` object is
+        `InferenceConfig`. If a `InferenceConfig` object is passed, it is
+        returned as is. If None is passed, a new `InferenceConfig` object is
         created with default values.
         """
         if inference_config is None:
-            interface_config_ = ModelInterfaceConfig()
-        elif isinstance(inference_config, ModelInterfaceConfig):
-            interface_config_ = deepcopy(inference_config)
+            inference_config_ = InferenceConfig()
+        elif isinstance(inference_config, InferenceConfig):
+            inference_config_ = deepcopy(inference_config)
         elif isinstance(inference_config, dict):
-            interface_config_ = ModelInterfaceConfig()
+            inference_config_ = InferenceConfig()
             for key, value in inference_config.items():
-                if not hasattr(interface_config_, key):
+                if not hasattr(inference_config_, key):
                     raise ValueError(
                         f"Unknown kwarg passed to model construction: {key}",
                     )
-                setattr(interface_config_, key, value)
+                setattr(inference_config_, key, value)
         else:
             raise ValueError(f"Unknown {inference_config=} passed to model.")
 
-        if interface_config_.PREPROCESS_TRANSFORMS is not None:
-            interface_config_.PREPROCESS_TRANSFORMS = [
+        if inference_config_.PREPROCESS_TRANSFORMS is not None:
+            inference_config_.PREPROCESS_TRANSFORMS = [
                 PreprocessorConfig.from_dict(config)
                 if isinstance(config, dict)
                 else config
-                for config in interface_config_.PREPROCESS_TRANSFORMS
+                for config in inference_config_.PREPROCESS_TRANSFORMS
             ]
 
-        return interface_config_
+        return inference_config_
