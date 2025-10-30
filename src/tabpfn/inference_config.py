@@ -4,14 +4,25 @@
 
 from __future__ import annotations
 
+import dataclasses
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Literal
 
-from tabpfn.preprocessing import PreprocessorConfig
+import pydantic
+
+from tabpfn.constants import ModelVersion, TaskType
+from tabpfn.preprocessing import (
+    PreprocessorConfig,
+    default_classifier_preprocessor_configs,
+    default_regressor_preprocessor_configs,
+    v2_classifier_preprocessor_configs,
+    v2_regressor_preprocessor_configs,
+)
 
 
-@dataclass
+# By default Pydantic dataclasses will ignore unrecognised config items, extra="forbid"
+# will raise an exception instead.
+@pydantic.dataclasses.dataclass(config=pydantic.ConfigDict(extra="forbid"))
 class InferenceConfig:
     """Additional configuration options for inference.
 
@@ -22,6 +33,29 @@ class InferenceConfig:
     Several of the preprocessing options are supported by our code for efficiency
     reasons (to avoid loading TabPFN multiple times). However, these can also be
     applied outside of the model interface.
+
+    This class must be serializable as it is peristed in the model checkpoints.
+
+    Do not edit the default values in this class, as this can affect the backwards
+    compatibility of the model checkpoints. Instead, edit `get_default()`.
+    """
+
+    PREPROCESS_TRANSFORMS: list[PreprocessorConfig]
+    """The preprocessing applied to the data before passing it to TabPFN. See
+    `PreprocessorConfig` for options and more details. If multiple `PreprocessorConfig`
+    are provided, they are (repeatedly) applied across different estimators.
+
+    By default, for classification, two preprocessors are applied:
+        1. Uses the original input data, all features transformed with a quantile
+            scaler, and the first n-many components of SVD transformer (whereby
+            n is a fract of on the number of features or samples). Categorical features
+            are ordinal encoded but all categories with less than 10 features are
+            ignored.
+        2. Uses the original input data, with categorical features as ordinal encoded.
+
+    By default, for regression, two preprocessor are applied:
+        1. The same as for classification, with a minimal different quantile scaler.
+        2. The original input data power transformed and categories onehot encoded.
     """
 
     MAX_UNIQUE_FOR_CATEGORICAL_FEATURES: int = 30
@@ -91,23 +125,6 @@ class InferenceConfig:
         - If a float, the percentage of samples to subsample.
     """
 
-    PREPROCESS_TRANSFORMS: list[PreprocessorConfig | dict] | None = None
-    """The preprocessing applied to the data before passing it to TabPFN. See
-    `PreprocessorConfig` for options and more details. If multiple `PreprocessorConfig`
-    are provided, they are (repeatedly) applied across different estimators.
-
-    By default, for classification, two preprocessors are applied:
-        1. Uses the original input data, all features transformed with a quantile
-            scaler, and the first n-many components of SVD transformer (whereby
-            n is a fract of on the number of features or samples). Categorical features
-            are ordinal encoded but all categories with less than 10 features are
-            ignored.
-        2. Uses the original input data, with categorical features as ordinal encoded.
-
-    By default, for regression, two preprocessor are applied:
-        1. The same as for classification, with a minimal different quantile scaler.
-        2. The original input data power transformed and categories onehot encoded.
-    """
     REGRESSION_Y_PREPROCESS_TRANSFORMS: tuple[
         Literal["safepower", "power", "quantile_norm", None],
         ...,
@@ -160,40 +177,76 @@ class InferenceConfig:
     _REGRESSION_DEFAULT_OUTLIER_REMOVAL_STD: None = None
     _CLASSIFICATION_DEFAULT_OUTLIER_REMOVAL_STD: float = 12.0
 
-    @staticmethod
-    def from_user_input(
-        *,
-        inference_config: dict | InferenceConfig | None,
+    def override_with_user_input(
+        self, user_config: dict | InferenceConfig | None
     ) -> InferenceConfig:
-        """Converts the user input to a `InferenceConfig` object.
+        """Return a new config with fields specified in `user_config` overwritten.
 
-        The input inference_config can be a dictionary, a `InferenceConfig` object,
-        or None. If a dictionary is passed, the keys must match the attributes of
-        `InferenceConfig`. If a `InferenceConfig` object is passed, it is
-        returned as is. If None is passed, a new `InferenceConfig` object is
-        created with default values.
+        Args:
+            user_config: Config provided by the user at inference time.
+                If a dictionary, then the keys must match attributes of
+                    `InferenceConfig` and will be used to override these attributes.
+                If an `InferenceConfig` object, then the whole config is overridden with
+                    the values from the user config.
+                If None, then a copy of this config is returned with no fields changed.
         """
-        if inference_config is None:
-            inference_config_ = InferenceConfig()
-        elif isinstance(inference_config, InferenceConfig):
-            inference_config_ = deepcopy(inference_config)
-        elif isinstance(inference_config, dict):
-            inference_config_ = InferenceConfig()
-            for key, value in inference_config.items():
-                if not hasattr(inference_config_, key):
-                    raise ValueError(
-                        f"Unknown kwarg passed to model construction: {key}",
-                    )
-                setattr(inference_config_, key, value)
-        else:
-            raise ValueError(f"Unknown {inference_config=} passed to model.")
+        if user_config is None:
+            return deepcopy(self)
+        if isinstance(user_config, InferenceConfig):
+            return deepcopy(user_config)
+        if isinstance(user_config, dict):
+            return dataclasses.replace(self, **user_config)
+        raise ValueError(
+            f"{user_config=}\nUnknown user config provided, see config above."
+        )
 
-        if inference_config_.PREPROCESS_TRANSFORMS is not None:
-            inference_config_.PREPROCESS_TRANSFORMS = [
-                PreprocessorConfig.from_dict(config)
-                if isinstance(config, dict)
-                else config
-                for config in inference_config_.PREPROCESS_TRANSFORMS
-            ]
+    @classmethod
+    def get_default(
+        cls, task_type: TaskType, model_version: ModelVersion | Literal["latest"]
+    ) -> InferenceConfig:
+        """Return the default config for the given model version and task type.
 
-        return inference_config_
+        For model versions after v2.5, the inference config is generated by calling this
+        function with `model_version=latest` and stored in the checkpoint. This stored
+        config is then loaded and used for inference.
+
+        For v2 and v2.5, the config is not stored in the checkpoint. Thus, for backwards
+        compatiblity, we define the v2 and v2.5 configs here and use those during
+        inference.
+        """
+        if model_version == ModelVersion.V2:
+            if task_type == "multiclass":
+                return InferenceConfig(
+                    PREPROCESS_TRANSFORMS=v2_classifier_preprocessor_configs()
+                )
+            if task_type == "regression":
+                return InferenceConfig(
+                    PREPROCESS_TRANSFORMS=v2_regressor_preprocessor_configs()
+                )
+        # TODO: Add v2.5
+
+        if task_type == "multiclass":
+            return InferenceConfig(
+                PREPROCESS_TRANSFORMS=default_classifier_preprocessor_configs()
+            )
+        if task_type == "regression":
+            return InferenceConfig(
+                PREPROCESS_TRANSFORMS=default_regressor_preprocessor_configs()
+            )
+        raise ValueError(f"Unknown {task_type=} {model_version=}")
+
+
+def _get_v2_config(preprocessor_configs: list[PreprocessorConfig]) -> InferenceConfig:
+    return InferenceConfig(
+        MAX_UNIQUE_FOR_CATEGORICAL_FEATURES=30,
+        MIN_UNIQUE_FOR_NUMERICAL_FEATURES=4,
+        MIN_NUMBER_SAMPLES_FOR_CATEGORICAL_INFERENCE=100,
+        OUTLIER_REMOVAL_STD="auto",
+        FEATURE_SHIFT_METHOD="shuffle",
+        CLASS_SHIFT_METHOD="shuffle",
+        FINGERPRINT_FEATURE=True,
+        POLYNOMIAL_FEATURES="no",
+        SUBSAMPLE_SAMPLES=None,
+        PREPROCESS_TRANSFORMS=preprocessor_configs,
+        REGRESSION_Y_PREPROCESS_TRANSFORMS=(None, "safepower"),
+    )

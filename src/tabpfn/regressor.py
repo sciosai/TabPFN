@@ -53,9 +53,7 @@ from tabpfn.model_loading import load_fitted_tabpfn_model, save_fitted_tabpfn_mo
 from tabpfn.preprocessing import (
     DatasetCollectionWithPreprocessing,
     EnsembleConfig,
-    PreprocessorConfig,
     RegressorEnsembleConfig,
-    default_regressor_preprocessor_configs,
 )
 from tabpfn.preprocessors import get_all_reshape_feature_distribution_preprocessors
 from tabpfn.preprocessors.preprocessing_helpers import get_ordinal_encoder
@@ -650,7 +648,6 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
             else:
                 preprocessor = None
             target_preprocessors.append(preprocessor)
-        preprocess_transforms = self.inference_config_.PREPROCESS_TRANSFORMS
 
         ensemble_configs = EnsembleConfig.generate_for_regression(
             num_estimators=self.n_estimators,
@@ -659,12 +656,7 @@ class TabPFNRegressor(RegressorMixin, BaseEstimator):
             feature_shift_decoder=self.inference_config_.FEATURE_SHIFT_METHOD,
             polynomial_features=self.inference_config_.POLYNOMIAL_FEATURES,
             max_index=len(X),
-            preprocessor_configs=typing.cast(
-                "Sequence[PreprocessorConfig]",
-                preprocess_transforms
-                if preprocess_transforms is not None
-                else default_regressor_preprocessor_configs(),
-            ),
+            preprocessor_configs=self.inference_config_.PREPROCESS_TRANSFORMS,
             target_transforms=target_preprocessors,
             random_state=rng,
             num_models=len(self.models_),

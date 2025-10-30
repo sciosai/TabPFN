@@ -6,6 +6,7 @@ from typing import Any, Literal, overload
 from typing_extensions import override
 from unittest.mock import patch
 
+import pytest
 import torch
 from pydantic.dataclasses import dataclass
 from torch import Tensor
@@ -19,6 +20,8 @@ from tabpfn.architectures.interface import (
     ArchitectureConfig,
     ArchitectureModule,
 )
+from tabpfn.inference_config import InferenceConfig
+from tabpfn.preprocessing import PreprocessorConfig
 
 
 def test__load_model__no_architecture_name_in_checkpoint__loads_base_architecture(
@@ -30,7 +33,7 @@ def test__load_model__no_architecture_name_in_checkpoint__loads_base_architectur
     checkpoint_path = tmp_path / "checkpoint.ckpt"
     torch.save(checkpoint, checkpoint_path)
 
-    loaded_model, _, loaded_config = model_loading.load_model(path=checkpoint_path)
+    loaded_model, _, loaded_config, _ = model_loading.load_model(path=checkpoint_path)
     assert isinstance(loaded_model, PerFeatureTransformer)
     assert isinstance(loaded_config, ModelConfig)
 
@@ -125,6 +128,182 @@ def test__load_model__architecture_name_in_checkpoint__loads_specified_architect
     checkpoint_path = tmp_path / "checkpoint.ckpt"
     torch.save(checkpoint, checkpoint_path)
 
-    loaded_model, _, loaded_config = model_loading.load_model(path=checkpoint_path)
+    loaded_model, _, loaded_config, _ = model_loading.load_model(path=checkpoint_path)
     assert isinstance(loaded_model, DummyArchitecture)
     assert isinstance(loaded_config, FakeConfig)
+
+
+def test__load_v2_checkpoint__returns_v2_preprocessings(
+    tmp_path: Path,
+) -> None:
+    architecture_config = _get_minimal_base_architecture_config()
+    model = base.get_architecture(
+        architecture_config, n_out=10, cache_trainset_representation=True
+    )
+    # v2 checkpoints have no "architecture_name" key
+    checkpoint = {
+        "state_dict": model.state_dict(),
+        "config": asdict(architecture_config),
+    }
+    checkpoint_path = tmp_path / "checkpoint.ckpt"
+    torch.save(checkpoint, checkpoint_path)
+
+    _, _, _, inference_config = model_loading.load_model_criterion_config(
+        model_path=[checkpoint_path, checkpoint_path],
+        check_bar_distribution_criterion=False,
+        cache_trainset_representation=False,
+        which="classifier",
+        version="v2",
+        download_if_not_exists=False,
+    )
+
+    assert len(inference_config.PREPROCESS_TRANSFORMS) == 2
+    assert inference_config.PREPROCESS_TRANSFORMS[0].name == "quantile_uni_coarse"
+    assert inference_config.PREPROCESS_TRANSFORMS[0].append_original == "auto"
+    assert (
+        inference_config.PREPROCESS_TRANSFORMS[0].categorical_name
+        == "ordinal_very_common_categories_shuffled"
+    )
+    assert inference_config.PREPROCESS_TRANSFORMS[0].global_transformer_name == "svd"
+    assert inference_config.PREPROCESS_TRANSFORMS[0].subsample_features == -1
+    assert inference_config.PREPROCESS_TRANSFORMS[1].name == "none"
+    assert inference_config.PREPROCESS_TRANSFORMS[1].categorical_name == "numeric"
+    assert inference_config.PREPROCESS_TRANSFORMS[1].subsample_features == -1
+
+
+@patch.dict(ARCHITECTURES, fake_arch=FakeArchitectureModule())
+def test__load_post_v2_ckpt_without_inference_config__returns_v2_preprocessing(
+    tmp_path: Path,
+) -> None:
+    # TODO: Update this test to instead check for the v2.5 preprocessing.
+    architecture_config = {"max_num_classes": 10, "num_buckets": 100}
+    checkpoint = {
+        "state_dict": {},
+        "config": architecture_config,
+        "architecture_name": "fake_arch",
+    }
+    checkpoint_path = tmp_path / "checkpoint.ckpt"
+    torch.save(checkpoint, checkpoint_path)
+
+    _, _, _, inference_config = model_loading.load_model_criterion_config(
+        model_path=[checkpoint_path, checkpoint_path],
+        check_bar_distribution_criterion=False,
+        cache_trainset_representation=False,
+        which="classifier",
+        version="v2",
+        download_if_not_exists=False,
+    )
+
+    assert len(inference_config.PREPROCESS_TRANSFORMS) == 2
+    assert inference_config.PREPROCESS_TRANSFORMS[0].name == "quantile_uni_coarse"
+    assert inference_config.PREPROCESS_TRANSFORMS[0].append_original == "auto"
+    assert (
+        inference_config.PREPROCESS_TRANSFORMS[0].categorical_name
+        == "ordinal_very_common_categories_shuffled"
+    )
+    assert inference_config.PREPROCESS_TRANSFORMS[0].global_transformer_name == "svd"
+    assert inference_config.PREPROCESS_TRANSFORMS[0].subsample_features == -1
+    assert inference_config.PREPROCESS_TRANSFORMS[1].name == "none"
+    assert inference_config.PREPROCESS_TRANSFORMS[1].categorical_name == "numeric"
+    assert inference_config.PREPROCESS_TRANSFORMS[1].subsample_features == -1
+
+
+@patch.dict(ARCHITECTURES, fake_arch=FakeArchitectureModule())
+def test__load_checkpoints_with_inference_configs__returns_inference_config(
+    tmp_path: Path,
+) -> None:
+    architecture_config = {"max_num_classes": 10, "num_buckets": 100}
+    inference_config = InferenceConfig(
+        PREPROCESS_TRANSFORMS=[
+            PreprocessorConfig(
+                "quantile_uni_coarse",
+                append_original="auto",
+                categorical_name="ordinal_very_common_categories_shuffled",
+                global_transformer_name="svd",
+                subsample_features=-1,
+            )
+        ]
+    )
+
+    checkpoint_1 = {
+        "state_dict": {},
+        "config": architecture_config,
+        "architecture_name": "fake_arch",
+        "inference_config": asdict(inference_config),
+    }
+    checkpoint_1_path = tmp_path / "checkpoint1.ckpt"
+    torch.save(checkpoint_1, checkpoint_1_path)
+    checkpoint_2 = {
+        "state_dict": {},
+        "config": architecture_config,
+        "architecture_name": "fake_arch",
+        "inference_config": asdict(inference_config),
+    }
+    checkpoint_2_path = tmp_path / "checkpoint2.ckpt"
+    torch.save(checkpoint_2, checkpoint_2_path)
+
+    loaded_models, _, _, loaded_config = model_loading.load_model_criterion_config(
+        model_path=[checkpoint_1_path, checkpoint_2_path],
+        check_bar_distribution_criterion=False,
+        cache_trainset_representation=False,
+        which="classifier",
+        version="v2",
+        download_if_not_exists=False,
+    )
+    assert len(loaded_models) == 2
+    assert loaded_config == inference_config
+
+
+@patch.dict(ARCHITECTURES, fake_arch=FakeArchitectureModule())
+def test__load_multiple_models_with_difference_inference_configs__raises(
+    tmp_path: Path,
+) -> None:
+    architecture_config = {"max_num_classes": 10, "num_buckets": 100}
+    checkpoint_1 = {
+        "state_dict": {},
+        "config": architecture_config,
+        "architecture_name": "fake_arch",
+        "inference_config": asdict(
+            InferenceConfig(
+                PREPROCESS_TRANSFORMS=[
+                    PreprocessorConfig(
+                        "quantile_uni_coarse",
+                        append_original="auto",
+                        categorical_name="ordinal_very_common_categories_shuffled",
+                        global_transformer_name="svd",
+                        subsample_features=-1,
+                    )
+                ]
+            )
+        ),
+    }
+    checkpoint_1_path = tmp_path / "checkpoint1.ckpt"
+    torch.save(checkpoint_1, checkpoint_1_path)
+    checkpoint_2 = {
+        "state_dict": {},
+        "config": architecture_config,
+        "architecture_name": "fake_arch",
+        "inference_config": asdict(
+            InferenceConfig(
+                PREPROCESS_TRANSFORMS=[
+                    PreprocessorConfig(
+                        "none",
+                        categorical_name="numeric",
+                        subsample_features=-1,
+                    )
+                ]
+            )
+        ),
+    }
+    checkpoint_2_path = tmp_path / "checkpoint2.ckpt"
+    torch.save(checkpoint_2, checkpoint_2_path)
+
+    with pytest.raises(ValueError, match="Inference configs for different models"):
+        model_loading.load_model_criterion_config(
+            model_path=[checkpoint_1_path, checkpoint_2_path],
+            check_bar_distribution_criterion=False,
+            cache_trainset_representation=False,
+            which="classifier",
+            version="v2",
+            download_if_not_exists=False,
+        )
