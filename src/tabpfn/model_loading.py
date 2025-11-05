@@ -50,6 +50,9 @@ logger = logging.getLogger(__name__)
 # Public fallback base URL for model downloads
 FALLBACK_S3_BASE_URL = "https://storage.googleapis.com/tabpfn-v2-model-files/05152025"
 
+# Special string used to identify v2.5 models in model paths.
+V_2_5_IDENTIFIER = "v2.5"
+
 
 class ModelType(str, Enum):  # noqa: D101
     # TODO: Merge with TaskType in tabpfn.constants.
@@ -78,6 +81,7 @@ class ModelSource:  # noqa: D101
             "tabpfn-v2-classifier-finetuned-od3j1g5m-4svepuy5.ckpt",
             "tabpfn-v2-classifier-finetuned-llderlii-oyd7ul21.ckpt",
             "tabpfn-v2-classifier-finetuned-gn2p4bpt-xp6f0iqb.ckpt",
+            "tabpfn-v2-classifier-v2_default.ckpt",
         ]
         return cls(
             repo_id="Prior-Labs/TabPFN-v2-clf",
@@ -92,6 +96,7 @@ class ModelSource:  # noqa: D101
             "tabpfn-v2-regressor-09gpqh39.ckpt",
             "tabpfn-v2-regressor-2noar4o2.ckpt",
             "tabpfn-v2-regressor-wyl4o83o.ckpt",
+            "tabpfn-v2-regressor-v2_default.ckpt",
         ]
         return cls(
             repo_id="Prior-Labs/TabPFN-v2-reg",
@@ -102,25 +107,35 @@ class ModelSource:  # noqa: D101
     @classmethod
     def get_classifier_v2_5(cls) -> ModelSource:  # noqa: D102
         filenames = [
-            "v2.5_classification_ii02f5gb_best_as_of_2867200.ckpt",
-            "v2.5_classification_7vdcwfor_backup_large_features.cpkt",
-            "v2.5_classification_zrhrpcxm_best_finetuned.cpkt",
+            "tabpfn-v2.5-classifier-v2.5_default.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_large-features-L.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_large-features-XL.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_large-samples.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_real-large-features.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_real-large-samples-and-features.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_real.ckpt",
+            "tabpfn-v2.5-classifier-v2.5_variant.ckpt",
         ]
         return cls(
-            repo_id="Prior-Labs/tabpfn-private-test",
-            default_filename="v2.5_classification_zrhrpcxm_best_finetuned.cpkt",
+            repo_id="Prior-Labs/tabpfn_2_5",
+            default_filename="tabpfn-v2.5-classifier-v2.5_default.ckpt",
             filenames=filenames,
         )
 
     @classmethod
     def get_regressor_v2_5(cls) -> ModelSource:  # noqa: D102
         filenames = [
-            "v2.5_regression_z0dqxe04_best_as_of_1376500.cpkt",
-            "v2.5_regression_4edkolbq_best.cpkt",
+            "tabpfn-v2.5-regressor-v2.5_default.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_low-skew.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_quantiles.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_real-variant.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_real.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_small-samples.ckpt",
+            "tabpfn-v2.5-regressor-v2.5_variant.ckpt",
         ]
         return cls(
-            repo_id="Prior-Labs/tabpfn-private-test",
-            default_filename="v2.5_regression_4edkolbq_best.cpkt",
+            repo_id="Prior-Labs/tabpfn_2_5",
+            default_filename="tabpfn-v2.5-regressor-v2.5_default.ckpt",
             filenames=filenames,
         )
 
@@ -316,17 +331,18 @@ def download_model(
 
 
 def download_all_models(to: Path) -> None:
-    """Download all v2 classifier and regressor models into a local directory."""
+    """Download all available classifier and regressor models into a local directory."""
     to.mkdir(parents=True, exist_ok=True)
-    for model_source, model_type in [
-        (ModelSource.get_classifier_v2(), "classifier"),
-        (ModelSource.get_regressor_v2(), "regressor"),
+    for model_version, model_source, model_type in [
+        (ModelVersion.V2, ModelSource.get_classifier_v2(), "classifier"),
+        (ModelVersion.V2, ModelSource.get_regressor_v2(), "regressor"),
+        (ModelVersion.V2_5, ModelSource.get_classifier_v2_5(), "classifier"),
+        (ModelVersion.V2_5, ModelSource.get_regressor_v2_5(), "regressor"),
     ]:
         for ckpt_name in model_source.filenames:
             download_model(
                 to=to / ckpt_name,
-                # TODO: Add v2.5 support once it's released.
-                version=ModelVersion.V2,
+                version=model_version,
                 which=cast("Literal['classifier', 'regressor']", model_type),
                 model_name=ckpt_name,
             )
@@ -531,10 +547,32 @@ def load_model_criterion_config(
     return loaded_models, first_criterion, architecture_configs, first_inference_config
 
 
+def _resolve_model_version(model_path: ModelPath | None) -> ModelVersion:
+    if model_path is None:
+        return settings.tabpfn.model_version
+    if V_2_5_IDENTIFIER in Path(model_path).name:
+        return ModelVersion.V2_5
+    return ModelVersion.V2
+
+
+def resolve_model_version(
+    model_path: ModelPath | list[ModelPath] | None,
+) -> ModelVersion:
+    """Resolve the model version from the model path."""
+    if isinstance(model_path, list):
+        if len(model_path) == 0:
+            return _resolve_model_version(None)
+        resolved_model_versions = [_resolve_model_version(p) for p in model_path]
+        if len(set(resolved_model_versions)) > 1:
+            raise ValueError("All model paths must have the same version.")
+        return resolved_model_versions[0]
+    return _resolve_model_version(model_path)
+
+
 def resolve_model_path(
     model_path: ModelPath | list[ModelPath] | None,
     which: Literal["regressor", "classifier"],
-    version: Literal["v2", "v2.5"] = "v2",
+    version: Literal["v2", "v2.5"] = "v2.5",
 ) -> tuple[
     list[Path],
     list[Path],
