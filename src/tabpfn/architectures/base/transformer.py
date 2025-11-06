@@ -6,6 +6,7 @@ import logging
 import warnings
 from collections.abc import Callable, Iterable
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, overload
 from typing_extensions import Self, override
 
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# Hard coded "random" embeddings (seed=42) used during training of size
+# 2000 x 48.
+col_embedding_path = Path(__file__).parent / "tabpfn_col_embedding.pt"
+COL_EMBEDDING = torch.load(col_embedding_path, weights_only=True)
 
 
 class LayerStack(nn.Module):
@@ -642,20 +648,8 @@ class PerFeatureTransformer(Architecture):
             )
             positional_embedding_rng = None
         else:
-            seed = self.random_embedding_seed
-
-            # For datasets with a small number of features (1, 2, or 3 features),
-            # the seed becomes important. Since during training, we generate
-            # random numbers on the GPU, the same seed on CPU or MPS can be suboptimal.
-            # For CPU and MPS, we therefore fix the seed to values that work
-            # well also for datasets with few features.
-            if x.device.type == "cpu":
-                seed = 819
-            if x.device.type == "mps":
-                seed = 42
-
             positional_embedding_rng = torch.Generator(device=x.device).manual_seed(
-                seed
+                self.random_embedding_seed
             )
 
         if self.feature_positional_embedding == "normal_rand_vec":
@@ -696,6 +690,13 @@ class PerFeatureTransformer(Architecture):
                 dtype=x.dtype,
                 generator=positional_embedding_rng,
             )
+            # Random numbers on CPU and GPU are different. We fixed the seed, so these
+            # are not actually random, leading to a performance drop on CPU without
+            # hardcoding them.
+            if embs.shape[1] == 48 and self.random_embedding_seed == 42:  # 192 // 4
+                embs[:2000] = COL_EMBEDDING[: embs.shape[0]].to(
+                    device=embs.device, dtype=embs.dtype
+                )
             embs = self.feature_positional_embedding_embeddings(embs)
             x += embs[None, None]
         elif self.feature_positional_embedding is None:
