@@ -9,7 +9,7 @@
 
 <img src="https://github.com/PriorLabs/tabpfn-extensions/blob/main/tabpfn_summary.webp" width="80%" alt="TabPFN Summary">
 
-## 🏁 Quick Start
+## Quick Start
 
 ### Interactive Notebook Tutorial
 > [!TIP]
@@ -117,7 +117,7 @@ For optimal performance, use the `AutoTabPFNClassifier` or `AutoTabPFNRegressor`
    predictions = clf.predict(X_test)
    ```
 
-## 🌐 TabPFN Ecosystem
+## TabPFN Ecosystem
 
 Choose the right TabPFN implementation for your needs:
 
@@ -127,15 +127,15 @@ Choose the right TabPFN implementation for your needs:
 - **[TabPFN Extensions](https://github.com/priorlabs/tabpfn-extensions)**
   A powerful companion repository packed with advanced utilities, integrations, and features - great place to contribute:
 
-  - 🔍 **`interpretability`**: Gain insights with SHAP-based explanations, feature importance, and selection tools.
-  - 🕵️‍♂️ **`unsupervised`**: Tools for outlier detection and synthetic tabular data generation.
-  - 🧬 **`embeddings`**: Extract and use TabPFN’s internal learned embeddings for downstream tasks or analysis.
-  - 🧠 **`many_class`**: Handle multi-class classification problems that exceed TabPFN's built-in class limit.
-  - 🌲 **`rf_pfn`**: Combine TabPFN with traditional models like Random Forests for hybrid approaches.
-  - ⚙️ **`hpo`**: Automated hyperparameter optimization tailored to TabPFN.
-  - 🔁 **`post_hoc_ensembles`**: Boost performance by ensembling multiple TabPFN models post-training.
+  -  **`interpretability`**: Gain insights with SHAP-based explanations, feature importance, and selection tools.
+  -  **`unsupervised`**: Tools for outlier detection and synthetic tabular data generation.
+  -  **`embeddings`**: Extract and use TabPFN’s internal learned embeddings for downstream tasks or analysis.
+  -  **`many_class`**: Handle multi-class classification problems that exceed TabPFN's built-in class limit.
+  -  **`rf_pfn`**: Combine TabPFN with traditional models like Random Forests for hybrid approaches.
+  -  **`hpo`**: Automated hyperparameter optimization tailored to TabPFN.
+  -  **`post_hoc_ensembles`**: Boost performance by ensembling multiple TabPFN models post-training.
 
-  ✨ To install:
+  To install:
   ```bash
   git clone https://github.com/priorlabs/tabpfn-extensions.git
   pip install -e tabpfn-extensions
@@ -147,7 +147,7 @@ Choose the right TabPFN implementation for your needs:
 - **[TabPFN UX](https://ux.priorlabs.ai)**
   No-code graphical interface to explore TabPFN capabilities—ideal for business users and prototyping.
 
-## 🔀 TabPFN Workflow at a Glance
+## TabPFN Workflow at a Glance
 Follow this decision tree to build your model and choose the right extensions from our ecosystem. It walks you through critical questions about your data, hardware, and performance needs, guiding you to the best solution for your specific use case.
 
 ```mermaid
@@ -289,11 +289,11 @@ graph LR
 
 ```
 
-## 📜 License
+## License
 
 Prior Labs License (Apache 2.0 with additional attribution requirement): [here](https://priorlabs.ai/tabpfn-license/)
 
-## 🤝 Join Our Community
+## Join Our Community
 
 We're building the future of tabular machine learning and would love your involvement:
 
@@ -309,7 +309,7 @@ We're building the future of tabular machine learning and would love your involv
 
 3. **Stay Updated**: Star the repo and join Discord for the latest updates
 
-## 📚 Citation
+## Citation
 
 You can read our paper explaining TabPFN [here](https://doi.org/10.1038/s41586-024-08328-6).
 
@@ -443,7 +443,7 @@ Not effective:
 - Adapt feature scaling
 - Convert categorical features to numerical values (e.g., one-hot encoding)
 
-## 🛠️ Development
+## Development
 
 1. Setup environment:
 ```bash
@@ -465,7 +465,7 @@ pre-commit run --all-files
 pytest tests/
 ```
 
-## 📊 Anonymized Telemetry
+## Anonymized Telemetry
 
 This project collects fully anonymous usage telemetry with an option to opt-out of any telemetry or opt-in to extended telemetry.
 
