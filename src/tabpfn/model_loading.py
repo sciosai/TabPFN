@@ -247,8 +247,6 @@ def _try_huggingface_downloads(
                 is_auth_error = True
 
             if is_auth_error:
-                # This is the "better UX" part:
-                # Raise a helpful, multi-line error message.
                 auth_message = (
                     f"Authentication error downloading from '{source.repo_id}'.\n"
                     "This model is gated and requires you to accept its terms.\n\n"
@@ -263,6 +261,7 @@ def _try_huggingface_downloads(
                     " with a read token)."
                 )
                 raise RuntimeError(auth_message)  # noqa: B904
+            raise e
 
         logger.info(f"Successfully downloaded to {base_path}")
 
