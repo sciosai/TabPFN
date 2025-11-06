@@ -256,7 +256,7 @@ def _try_huggingface_downloads(
                     f" accept the terms of use.\n"
                     "2. Log in to your Hugging Face account via"
                     " the command line by running:\n"
-                    "   huggingface-cli login\n"
+                    "   hf auth login\n"
                     "(Alternatively, you can set the HF_TOKEN environment variable"
                     " with a read token)."
                 )
