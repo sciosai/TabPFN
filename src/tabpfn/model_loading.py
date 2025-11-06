@@ -221,8 +221,10 @@ def _try_huggingface_downloads(
             # Move model file to desired location
             Path(local_path).rename(base_path)
 
-            # Download config.json only to increment the download counter.
-            # (See original code for full reasoning)
+            # Download config.json only to increment the download counter. We do not
+            # actually use this file so it is removed immediately after download.
+            # Note that we also handle model caching ourselves, so we don't double
+            # count, even with removing the config.json afterwards.
             try:
                 config_local_path = hf_hub_download(
                     repo_id=source.repo_id,
