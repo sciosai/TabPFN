@@ -24,6 +24,7 @@ from urllib.error import URLError
 
 import joblib
 import torch
+from tabpfn_common_utils.telemetry import set_model_config
 from torch import nn
 
 from tabpfn.architectures import ARCHITECTURES
@@ -521,6 +522,9 @@ def load_model_criterion_config(
         )
     )
 
+    # Anonymously track the model config for usage telemetry
+    _log_model_config(resolved_model_paths, which, model_version)
+
     for folder in resolved_model_dirs:
         folder.mkdir(parents=True, exist_ok=True)
 
@@ -595,6 +599,34 @@ def _resolve_model_version(model_path: ModelPath | None) -> ModelVersion:
     if V_2_5_IDENTIFIER in Path(model_path).name:
         return ModelVersion.V2_5
     return ModelVersion.V2
+
+
+def _log_model_config(
+    model_paths: list[Path],
+    which: Literal["classifier", "regressor"],
+    version: ModelVersion,
+) -> None:
+    """Set the model config (model_path and model_version) for anonymous
+    usage telemetry.
+
+    Args:
+        model_paths: The path(s) to the model.
+        which: The type of model ('classifier' or 'regressor').
+        version: The model version (currently only 'v2' or 'v2.5').
+    """
+    if len(model_paths) != 1:
+        return
+
+    model_type = ModelType(which)
+    model_source = _get_model_source(version, model_type)
+
+    path: Path = model_paths[0]
+    # Check to avoid that we pass in arbitrary paths containing e.g. PII
+    # Ensure we whitelist model names so that no PII can be released.
+    if path.name in model_source.filenames:
+        set_model_config(path.name, version.value)
+    else:
+        set_model_config("OTHER", version.value)
 
 
 def resolve_model_version(
