@@ -263,8 +263,6 @@ def _try_huggingface_downloads(
                 raise RuntimeError(auth_message)  # noqa: B904
             raise e
 
-        logger.info(f"Successfully downloaded to {base_path}")
-
 
 def _try_direct_downloads(
     base_path: Path,
